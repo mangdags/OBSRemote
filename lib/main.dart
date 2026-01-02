@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:obsremote/models/presets_repo.dart';
+import 'package:obsremote/services/fights_storage.dart';
 import 'package:obsremote/widgets/entry_name.dart';
 import 'package:obsremote/widgets/fight_info.dart';
-import 'package:obsremote/widgets/manual_score.dart';
 import 'package:obsremote/widgets/scenes.dart';
 import 'package:obsremote/widgets/winning_sides.dart';
+import 'package:obsremote/models/fighter_preset.dart';
 import 'obs_client.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io';
@@ -29,7 +32,7 @@ void main() {
 
 class ObsRemoteApp extends StatelessWidget {
   const ObsRemoteApp({super.key});
-  
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -50,7 +53,8 @@ class ObsRemoteHome extends StatefulWidget {
 class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   final _obs = ObsClient();
 
-  final _hostCtrl = TextEditingController(text: "10.68.182.166"); // <-- OBS PC IP
+  final _hostCtrl =
+      TextEditingController(text: "192.168.1.25"); // <-- OBS PC IP
   final _entryCtrl = TextEditingController();
 
   String _side = "meron";
@@ -62,17 +66,120 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   final String meronTextSource = "MeronEntryName";
   final String walaTextSource = "WalaEntryName";
   final String meronBanner = "MeronBanner";
-  final String walaBanner  = "WalaBanner";
-  late String meronEntryName ="";
-  late String walaEntryName ="";
+  final String walaBanner = "WalaBanner";
+  late String meronEntryName = "";
+  late String walaEntryName = "";
 
   final String meronWeight = "meron_weight";
-  final String walaWeight ="wala_weight";
+  final String walaWeight = "wala_weight";
   final String meronWB = "meron_wb";
   final String walaWB = "wala_wb";
 
   Duration showDuration = const Duration(seconds: 7);
-  Duration preShowDelay = const Duration(milliseconds: 250); // name “loads” first
+  Duration preShowDelay =
+      const Duration(milliseconds: 250); // name “loads” first
+
+  // winner flow state
+  int currentFightNo = 1;
+  String? defaultSceneKey; // from dropdown in Scenes
+  final scenesKey = GlobalKey<ScenesState>();
+
+  String meronKey = "";
+  String walaKey = "";
+
+  // OBS scenes (edit to your real scene names)
+  final String replaySceneName = "SceneReplay";
+  final String meronWinScene = "MERON-WINS";
+  final String walaWinScene = "WALA-WINS";
+  final String drawScene = "DRAW-FIGHT";
+  final String cancelScene = "CANCELLED-FIGHT";
+  final String meronChampScene = "MERON-CHAMP";
+  final String walaChampScene = "WALA-CHAMP";
+
+  Timer? _winnerTimer;
+  Timer? _replayTimer;
+
+  final _presetsRepo = PresetsRepo();
+
+  void _cancelWinnerFlow() {
+    _winnerTimer?.cancel();
+    _replayTimer?.cancel();
+    _winnerTimer = null;
+    _replayTimer = null;
+  }
+
+  static const int maxFights = FighterPreset.maxFights;
+
+  String meronScoreSource(int i) => "meron_score_$i";
+  String walaScoreSource(int i) => "wala_score_$i";
+
+  final String meronScoresGroup = "MeronScoresGroup";
+  final String walaScoresGroup = "WalaScoresGroup";
+
+  late String scoresSceneName;
+
+  bool _meronScoresVisible = false;
+  bool _walaScoresVisible = false;
+
+  Future<void> _pushScoresToObs({
+    required bool isMeron,
+    required FighterPreset fighterPreset,
+  }) async {
+    if (!_obs.isConnected) return;
+
+    debugPrint("PUSH ${fighterPreset.key} scores: ${fighterPreset.scores}");
+
+    for (var i = 1; i <= maxFights; i++) {
+      final val = fighterPreset.scores[i] ?? ""; // ✅ real stored values
+      final inputName = isMeron ? meronScoreSource(i) : walaScoreSource(i);
+
+      await _obs.setTextSource(inputName: inputName, text: val);
+    }
+  }
+
+  Future<void> _setScoresVisibility(
+      {required bool showMeron, required bool showWala}) async {
+    if (!_obs.isConnected) return;
+
+    try {
+      await _obs.setSceneItemVisibleByName(
+        sceneName: scoresSceneName,
+        sourceName: meronScoresGroup,
+        visible: showMeron,
+      );
+      await _obs.setSceneItemVisibleByName(
+        sceneName: scoresSceneName,
+        sourceName: walaScoresGroup,
+        visible: showWala,
+      );
+
+      _meronScoresVisible = showMeron;
+      _walaScoresVisible = showWala;
+    } catch (_) {}
+  }
+
+  // Convenience:
+  Future<void> _hideAllScores() =>
+      _setScoresVisibility(showMeron: false, showWala: false);
+
+  Future<void> _updateScoresVisibilityAfterSelection() async {
+    // Show only the sides that currently have keys set
+    final showMeron = meronKey.isNotEmpty;
+    final showWala = walaKey.isNotEmpty;
+    await _setScoresVisibility(showMeron: showMeron, showWala: showWala);
+  }
+
+  void snack(String msg, {bool isError = false}) {
+    final m = ScaffoldMessenger.of(context);
+    m.hideCurrentSnackBar();
+    m.showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: isError ? Colors.redAccent : null,
+      ),
+    );
+  }
 
   Future<void> _connect() async {
     setState(() => _status = "Connecting...");
@@ -121,59 +228,271 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   }
 
   Future<void> importDocx(BuildContext context) async {
-  final res = await FilePicker.platform.pickFiles(
-    type: FileType.custom,
-    allowedExtensions: ['docx'],
-    withData: true, // important (gets bytes on most platforms)
-  );
+    final res = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['docx'],
+      withData: true, // important (gets bytes on most platforms)
+    );
 
-  if (res == null) return; // cancelled
+    if (res == null) return; // cancelled
 
-  final bytes = res.files.single.bytes;
-  if (bytes == null) {
-    // fallback to path read
-    final path = res.files.single.path;
-    if (path == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to read DOCX bytes/path')),
-      );
+    final bytes = res.files.single.bytes;
+    if (bytes == null) {
+      // fallback to path read
+      final path = res.files.single.path;
+      if (path == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to read DOCX bytes/path')),
+        );
+        return;
+      }
+      final fileBytes = await File(path).readAsBytes();
+      await _importBytes(context, fileBytes);
       return;
     }
-    final fileBytes = await File(path).readAsBytes();
-    await _importBytes(context, fileBytes);
-    return;
+
+    await _importBytes(context, bytes);
   }
 
-  await _importBytes(context, bytes);
-}
+  Future<void> _importBytes(BuildContext context, List<int> bytes) async {
+    try {
+      final result = DocxImporter.importFromBytes(bytes as Uint8List);
 
-Future<void> _importBytes(BuildContext context, List<int> bytes) async {
-  try {
-    final result = DocxImporter.importFromBytes(bytes as Uint8List);
+      // Convert to your presets.json structure
+      final jsonMap = <String, dynamic>{};
+      for (final e in result.presets.entries) {
+        jsonMap[e.key] = e.value.toJson();
+      }
 
-    // Convert to your presets.json structure
-    final jsonMap = <String, dynamic>{};
-    for (final e in result.presets.entries) {
-      jsonMap[e.key] = e.value.toJson();
+      await PresetsStorage.savePresetsJson(jsonMap);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Imported ${jsonMap.length} fighters (${result.looksLikeNewFormat ? "NEW" : "OLD"} format)',
+          ),
+        ),
+      );
+      setState(() {
+        meronEntryName = "";
+        walaEntryName = "";
+      });
+      await entryNameKey.currentState?.refresh();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Import failed: $e')),
+      );
+    }
+  }
+
+  final entryNameKey = GlobalKey<EntryNameState>();
+
+  Future<void> _applyScoresFromResult({
+    required String
+        result, // "MeronWin" "WalaWin" "Draw" "Cancel" "MeronChamp" "WalaChamp"
+    required int fightNo,
+    required String meronKey,
+    required String walaKey,
+  }) async {
+    // Cancel = do nothing (recommended)
+    if (result == "Cancel") return;
+
+    // ignore: unused_local_variable
+    String meronScore = "";
+    // ignore: unused_local_variable
+    String walaScore = "";
+
+    if (result == "MeronWin" || result == "MeronChamp") {
+      meronScore = "1";
+      walaScore = "0";
+    } else if (result == "WalaWin" || result == "WalaChamp") {
+      meronScore = "0";
+      walaScore = "1";
+    } else if (result == "Draw") {
+      meronScore = "0.5";
+      walaScore = "0.5";
+    } else {
+      return;
     }
 
-    await PresetsStorage.savePresetsJson(jsonMap);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Imported ${jsonMap.length} fighters (${result.looksLikeNewFormat ? "NEW" : "OLD"} format)',
-        ),
-      ),
+    await _presetsRepo.setScoresForNextAppearance(
+      meronKey: meronKey,
+      walaKey: walaKey,
+      result: result,
     );
 
-    // TODO: refresh your dropdown list by reloading presets.json into state
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Import failed: $e')),
-    );
+    // Reload updated presets and push to OBS
+    final m = await _presetsRepo.getByKey(meronKey);
+    final w = await _presetsRepo.getByKey(walaKey);
+
+    if (m != null) await _pushScoresToObs(isMeron: true, fighterPreset: m);
+    if (w != null) await _pushScoresToObs(isMeron: false, fighterPreset: w);
+
+    await entryNameKey.currentState?.refresh();
   }
-}
+
+  //WINNER SCENE
+  Future<void> setWinnerAndPlayFlow(String result) async {
+    // result must be: "MeronWin", "WalaWin", "Draw", "Cancel"
+    _cancelWinnerFlow();
+
+    if (meronKey.isEmpty || walaKey.isEmpty) {
+      snack("Set Meron/Wala first (keys missing).", isError: true);
+      return;
+    }
+    if (defaultSceneKey == null || defaultSceneKey!.isEmpty) {
+      snack("Select Default Scene first.", isError: true);
+      return;
+    }
+
+    // 1) Save fights.json (your requested format)
+    await FightsStorage.upsertFight(
+      fightNumber: currentFightNo,
+      meronKey: meronKey,
+      walaKey: walaKey,
+      result: result,
+    );
+
+    if (!_obs.isConnected) {
+      setState(() => _status = "Saved result, but OBS not connected");
+      snack("Saved fights.json, but OBS not connected.", isError: true);
+      return;
+    }
+
+    // 2) Play winner scene
+    String winnerScene;
+    switch (result) {
+      case "MeronWin":
+        winnerScene = meronWinScene;
+        break;
+      case "WalaWin":
+        winnerScene = walaWinScene;
+        break;
+      case "Draw":
+        winnerScene = drawScene;
+        break;
+      case "Cancel":
+        winnerScene = cancelScene;
+        break;
+      case "MeronChamp":
+        winnerScene = meronChampScene;
+        break;
+      case "WalaChamp":
+        winnerScene = walaChampScene;
+        break;
+      default:
+        snack("Unknown result: $result", isError: true);
+        return;
+    }
+
+    try {
+      await _obs.setCurrentProgramScene(winnerScene);
+      setState(
+          () => _status = "Fight $currentFightNo -> $result ($winnerScene)");
+    } catch (e) {
+      snack("Failed to switch to winner scene: $e", isError: true);
+      return;
+    }
+
+    // 3) After 30s, play replay scene
+    _winnerTimer = Timer(const Duration(seconds: 10), () async {
+      if (!_obs.isConnected) return;
+      try {
+        await _obs.setCurrentProgramScene(replaySceneName);
+        setState(() => _status = "Replay -> $replaySceneName");
+
+        // 4) After 10s, go back to default scene
+        _replayTimer = Timer(const Duration(seconds: 10), () async {
+          if (!_obs.isConnected) return;
+
+          try {
+            await _obs.setCurrentProgramScene(defaultSceneKey!);
+
+            await _updateScoresVisibilityAfterSelection();
+
+            await _applyScoresFromResult(
+              result: result,
+              fightNo: currentFightNo,
+              meronKey: meronKey,
+              walaKey: walaKey,
+            );
+
+            // ✅ AUTO-INCREMENT FIGHT NUMBER
+            setState(() {
+              currentFightNo += 1;
+              _status = "Fight complete. Ready for Fight $currentFightNo";
+            });
+
+            // ✅ Update Scenes TextField + OBS source
+            await scenesKey.currentState?.setFightNumber(currentFightNo);
+
+            // ✅ CLEAR ENTRY NAMES (OBS + UI)
+            await _clearObsEntryNames();
+            await _hideAllScores();
+            _clearLocalEntryState();
+          } catch (e) {
+            snack("Failed to return to default: $e", isError: true);
+          }
+        });
+      } catch (e) {
+        snack("Failed to play replay scene: $e", isError: true);
+      }
+    });
+  }
+
+  Future<void> _clearObsEntryNames() async {
+    if (!_obs.isConnected) return;
+
+    try {
+      await _obs.setTextSource(inputName: meronTextSource, text: "");
+      await _obs.setTextSource(inputName: walaTextSource, text: "");
+
+      await _obs.setTextSource(inputName: meronWeight, text: "");
+      await _obs.setTextSource(inputName: meronWB, text: "");
+      await _obs.setTextSource(inputName: walaWeight, text: "");
+      await _obs.setTextSource(inputName: walaWB, text: "");
+    } catch (_) {
+      // swallow errors silently (end-of-flow cleanup)
+    }
+  }
+
+  Future<void> _clearObsScores() async {
+    if (!_obs.isConnected) return;
+
+    try {
+      for (int x = 1; x <= maxFights; x++) {
+        await _obs.setTextSource(inputName: "meron_score_$x", text: "");
+        await _obs.setTextSource(inputName: "wala_score_$x", text: "");
+      }
+    } catch (_) {
+      // swallow errors silently (end-of-flow cleanup)
+    }
+  }
+
+  void _clearLocalEntryState() {
+    setState(() {
+      meronEntryName = "";
+      walaEntryName = "";
+      meronKey = "";
+      walaKey = "";
+    });
+
+    // clears dropdown selection + manual fields
+    entryNameKey.currentState?.clearInputsOnly();
+  }
+
+  String manualKey(String name) {
+    final s = name.trim().toLowerCase().replaceAll(RegExp(r"\s+"), "_");
+    final cleaned = s.replaceAll(RegExp(r"[^a-z0-9_]+"), "");
+    return cleaned.isEmpty ? "manual" : "manual_$cleaned";
+  }
+
+  //END
+
+  Future<FighterPreset> _freshPreset(FighterPreset p) async {
+    final latest = await _presetsRepo.getByKey(p.key);
+    return latest ?? p;
+  }
 
   @override
   void dispose() {
@@ -186,27 +505,122 @@ Future<void> _importBytes(BuildContext context, List<int> bytes) async {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("OBS Remote"), leading: Builder(builder: (context) {
-        return IconButton(icon: const Icon(Icons.menu), onPressed: () {
-          Scaffold.of(context).openDrawer();
-        },);
-      }),),
+      appBar: AppBar(
+        title: const Text("OBS Remote"),
+        leading: Builder(builder: (context) {
+          return IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () {
+              Scaffold.of(context).openDrawer();
+            },
+          );
+        }),
+      ),
       drawer: Drawer(
         child: ListView(
           children: [
             const DrawerHeader(child: Text('OBS Remote Settings')),
             ListTile(
               title: const Text('Import DOCX'),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(context);
-                importDocx(context);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("Import new set?"),
+                    content: const Text(
+                      "This will append to the current list",
+                    ),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text("Cancel")),
+                      ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text("Import")),
+                    ],
+                  ),
+                );
+
+                if (ok == true) {
+                  importDocx(context);
+                }
               },
             ),
             ListTile(
               title: const Text('Import CSV'),
-              onTap: () {
-
+              onTap: () async {
                 Navigator.pop(context);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("Import new set?"),
+                    content: const Text(
+                      "This will append to the current list",
+                    ),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text("Cancel")),
+                      ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text("Import")),
+                    ],
+                  ),
+                );
+
+                if (ok == true) {
+                  importDocx(context);
+                  await entryNameKey.currentState?.refresh();
+
+                  setState(() {
+                    meronEntryName = "";
+                    walaEntryName = "";
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Import Success!')),
+                    );
+                  });
+                }
+              },
+            ),
+            const Divider(),
+            ListTile(
+              title: const Text('Reset'),
+              onTap: () async {
+                Navigator.pop(context);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("Reset for next event?"),
+                    content: const Text(
+                      "This will archive and clear fights.js, fights.json, and presets.json.",
+                    ),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text("Cancel")),
+                      ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text("Reset")),
+                    ],
+                  ),
+                );
+
+                if (ok == true) {
+                  await PresetsStorage.archiveAndBlankEventFiles();
+                  await entryNameKey.currentState?.refresh();
+
+                  setState(() {
+                    meronEntryName = "";
+                    walaEntryName = "";
+                    meronKey = "";
+                    walaKey = "";
+                    currentFightNo = 1;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Reset Success!')),
+                    );
+                  });
+                }
               },
             )
           ],
@@ -217,57 +631,27 @@ Future<void> _importBytes(BuildContext context, List<int> bytes) async {
         child: Column(
           children: [
             EntryName(
-              title: "Entry Name Setter",
-              onSetMeron: (preset) async {
-                // Example: set OBS text + show banner using your existing ObsClient functions
-                await _obs.setTextSource(inputName: meronTextSource, text: preset.entryName);
-                await _obs.setTextSource(inputName: meronWeight, text: preset.w);
-                await _obs.setTextSource(inputName: meronWB, text: preset.wb);
-                
-                setState(() => _status = "MERON set: ${preset.entryName}");
-                setState(() {
-                  meronEntryName = preset.entryName;
-                });
+                key: entryNameKey,
+                title: "Entry Name Setter",
+                onSetMeron: (preset) async {
+                  final fresh = await _freshPreset(
+                      preset); // ✅ reload latest scores from file
 
-                await Future.delayed(preShowDelay);
-                await _obs.showEntryBanner(
-                  fightSceneName: fightSceneName,
-                  bannerSourceName: meronBanner,
-                  duration: showDuration,
-                );
+                  await _obs.setTextSource(
+                      inputName: meronTextSource, text: fresh.entryName);
+                  await _obs.setTextSource(
+                      inputName: meronWeight, text: fresh.w);
+                  await _obs.setTextSource(inputName: meronWB, text: fresh.wb);
 
-                 
-              },
-              onSetWala: (preset) async {
-                await _obs.setTextSource(inputName: walaTextSource, text: preset.entryName);
-                await _obs.setTextSource(inputName: walaWeight, text: preset.w);
-                await _obs.setTextSource(inputName: walaWB, text: preset.wb);
-                
-                setState(() => _status = "WALA set: ${preset.entryName}");
-                setState(() {
-                  walaEntryName = preset.entryName;
-                });
-
-                await Future.delayed(preShowDelay);
-                await _obs.showEntryBanner(
-                  fightSceneName: fightSceneName,
-                  bannerSourceName: walaBanner,
-                  duration: showDuration,
-                );
-
-                 
-              },
-
-              onUseManualMeron: (meronName) async {
-                if (meronName.isNotEmpty) {
-                  await _obs.setTextSource(inputName: meronTextSource, text: meronName);
-                  await _obs.setTextSource(inputName: meronWeight, text: "--");
-                  await _obs.setTextSource(inputName: meronWB, text: "ULUTAN");
+                  await _pushScoresToObs(isMeron: true, fighterPreset: fresh);
 
                   setState(() {
-                    meronEntryName = meronName;
-                  }); 
-                  setState(() => _status = "$meronName manually set to Meron.");
+                    _status = "MERON set: ${fresh.entryName}";
+                    meronEntryName = fresh.entryName;
+                    meronKey = fresh.key;
+                  });
+
+                  await _updateScoresVisibilityAfterSelection();
 
                   await Future.delayed(preShowDelay);
                   await _obs.showEntryBanner(
@@ -275,19 +659,25 @@ Future<void> _importBytes(BuildContext context, List<int> bytes) async {
                     bannerSourceName: meronBanner,
                     duration: showDuration,
                   );
-                }
-              },
+                },
+                onSetWala: (preset) async {
+                  final fresh = await _freshPreset(preset);
 
-              onUseManualWala: (walaName) async {
-                if (walaName.isNotEmpty) {
-                  await _obs.setTextSource(inputName: walaTextSource, text: walaName);
-                  await _obs.setTextSource(inputName: walaWeight, text: "--");
-                  await _obs.setTextSource(inputName: walaWB, text: "ULUTAN");
+                  await _obs.setTextSource(
+                      inputName: walaTextSource, text: fresh.entryName);
+                  await _obs.setTextSource(
+                      inputName: walaWeight, text: fresh.w);
+                  await _obs.setTextSource(inputName: walaWB, text: fresh.wb);
+
+                  await _pushScoresToObs(isMeron: false, fighterPreset: fresh);
 
                   setState(() {
-                    walaEntryName = walaName;
-                  }); 
-                  setState(() => _status = "$walaName manually set to Wala.");
+                    _status = "WALA set: ${fresh.entryName}";
+                    walaEntryName = fresh.entryName;
+                    walaKey = fresh.key;
+                  });
+
+                  await _updateScoresVisibilityAfterSelection();
 
                   await Future.delayed(preShowDelay);
                   await _obs.showEntryBanner(
@@ -295,32 +685,118 @@ Future<void> _importBytes(BuildContext context, List<int> bytes) async {
                     bannerSourceName: walaBanner,
                     duration: showDuration,
                   );
-                  
-                }
-              }
-            ),
+                },
+                onUseManualMeron: (meronName) async {
+                  if (meronName.isNotEmpty) {
+                    await _obs.setTextSource(
+                        inputName: meronTextSource, text: meronName);
+                    await _obs.setTextSource(
+                        inputName: meronWeight, text: "--");
+                    await _obs.setTextSource(
+                        inputName: meronWB, text: "ULUTAN");
 
+                    setState(() {
+                      meronEntryName = meronName;
+                      meronKey = manualKey(meronName);
+                    });
+
+                    final preset =
+                        await PresetsRepo().upsertFromEntryName(meronName);
+                    setState(() {
+                      meronEntryName = preset.entryName;
+                      meronKey = preset.key;
+                    });
+
+                    await _updateScoresVisibilityAfterSelection();
+
+                    await _pushScoresToObs(
+                        isMeron: true, fighterPreset: preset);
+
+                    await Future.delayed(preShowDelay);
+                    await _obs.showEntryBanner(
+                      fightSceneName: fightSceneName,
+                      bannerSourceName: meronBanner,
+                      duration: showDuration,
+                    );
+                  }
+                },
+                onUseManualWala: (walaName) async {
+                  if (walaName.isNotEmpty) {
+                    await _obs.setTextSource(
+                        inputName: walaTextSource, text: walaName);
+                    await _obs.setTextSource(inputName: walaWeight, text: "--");
+                    await _obs.setTextSource(inputName: walaWB, text: "ULUTAN");
+
+                    setState(() {
+                      walaEntryName = walaName;
+                      walaKey = manualKey(walaName);
+                    });
+
+                    final preset =
+                        await PresetsRepo().upsertFromEntryName(walaName);
+                    setState(() {
+                      walaEntryName = preset.entryName;
+                      walaKey = preset.key;
+                    });
+
+                    await _updateScoresVisibilityAfterSelection();
+
+                    await _pushScoresToObs(
+                        isMeron: false, fighterPreset: preset);
+
+                    await Future.delayed(preShowDelay);
+                    await _obs.showEntryBanner(
+                      fightSceneName: fightSceneName,
+                      bannerSourceName: walaBanner,
+                      duration: showDuration,
+                    );
+                  }
+                }),
             const Divider(),
             const SizedBox(height: 12),
-            
             Row(
               children: [
-                // Example: set OBS text + show banner using your existing ObsClient functions  
-                FightInfo(numberOfFights: 6, entryName:  meronEntryName, backgroundColor: Colors.redAccent,),
+                // Example: set OBS text + show banner using your existing ObsClient functions
+                FightInfo(
+                  numberOfFights: 6,
+                  entryName: meronEntryName,
+                  backgroundColor: Colors.redAccent,
+                ),
                 const SizedBox(width: 12),
-                FightInfo(numberOfFights: 6, entryName:  walaEntryName, backgroundColor: Colors.blueAccent,),
+                FightInfo(
+                  numberOfFights: 6,
+                  entryName: walaEntryName,
+                  backgroundColor: Colors.blueAccent,
+                ),
                 const SizedBox(width: 12),
-                WinningSides(meronEntry: 'Meron Entry', walaEntry: 'Wala Entry', side: 'Meron', isChampion: false),
+                WinningSides(
+                  onPickResult: (result) async {
+                    await setWinnerAndPlayFlow(result);
+                  },
+                ),
               ],
             ),
             const SizedBox(height: 12),
             const Divider(),
             const SizedBox(height: 12),
-            Scenes(),
-            const SizedBox(height: 12),
-            const Divider(),           
-          ],
+            Scenes(
+              key: scenesKey,
+              obs: _obs,
+              onDefaultSceneChanged: (v) async {
+                defaultSceneKey = v;
+                scoresSceneName = v!;
 
+                await _updateScoresVisibilityAfterSelection();
+              },
+              onFightNumberChanged: (n) {
+                setState(() {
+                  currentFightNo = n;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            const Divider(),
+          ],
         ),
       ),
       bottomNavigationBar: Padding(
@@ -329,9 +805,12 @@ Future<void> _importBytes(BuildContext context, List<int> bytes) async {
           crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text("Status: $_status", style: TextStyle(fontSize: 18),),
+            Text(
+              "Status: $_status",
+              style: TextStyle(fontSize: 18),
+            ),
             IconButton(
-              onPressed: _connect, 
+              onPressed: _connect,
               icon: const Icon(Icons.refresh),
               tooltip: _obs.isConnected ? "Connected" : "Disconnected",
               color: _obs.isConnected ? Colors.green : Colors.red,

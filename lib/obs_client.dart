@@ -159,9 +159,11 @@ class ObsClient {
       );
     }
 
-    await setSceneItemEnabled(sceneName: fightSceneName, sceneItemId: id, enabled: true);
+    await setSceneItemEnabled(
+        sceneName: fightSceneName, sceneItemId: id, enabled: true);
     await Future.delayed(duration);
-    await setSceneItemEnabled(sceneName: fightSceneName, sceneItemId: id, enabled: false);
+    await setSceneItemEnabled(
+        sceneName: fightSceneName, sceneItemId: id, enabled: false);
   }
 
   // Optional helpers (useful for Studio Mode decisions later)
@@ -181,5 +183,24 @@ class ObsClient {
       return rd["currentPreviewSceneName"] as String;
     }
     return null;
+  }
+
+  Future<void> setCurrentProgramScene(String sceneName) async {
+    await request(
+      "SetCurrentProgramScene",
+      requestData: {"sceneName": sceneName},
+    );
+  }
+
+  Future<void> setSceneItemVisibleByName({
+    required String sceneName,
+    required String sourceName,
+    required bool visible,
+  }) async {
+    final id =
+        await getSceneItemId(sceneName: sceneName, sourceName: sourceName);
+    if (id == null) return;
+    await setSceneItemEnabled(
+        sceneName: sceneName, sceneItemId: id, enabled: visible);
   }
 }

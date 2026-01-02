@@ -14,13 +14,13 @@ class FightInfo extends StatelessWidget {
     required this.numberOfFights,
     this.entryName = "",
     this.fightLabels,
-    this.backgroundColor= Colors.grey,
+    this.backgroundColor = Colors.grey,
   }) : assert(numberOfFights >= 0);
 
   @override
   Widget build(BuildContext context) {
-    final labels = fightLabels ??
-        List.generate(numberOfFights, (i) => 'F${i + 1}: ');
+    final labels =
+        fightLabels ?? List.generate(numberOfFights, (i) => 'F${i + 1}: ');
 
     return Container(
       height: 250,
@@ -33,12 +33,6 @@ class FightInfo extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Fight #: ',
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                )),
           Text(
             entryName,
             maxLines: 2,
@@ -61,23 +55,27 @@ class FightInfo extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text('Total: ',
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                )),
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              )),
           const Divider(color: Colors.white, thickness: 2),
           const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: (){},
-                  style: ButtonStyle(
-                    backgroundColor: WidgetStatePropertyAll<Color>(Colors.white,),
-                  ), 
-                  child: Text('Update Score', style: TextStyle(color: Colors.black),) 
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+                onPressed: () {},
+                style: ButtonStyle(
+                  backgroundColor: WidgetStatePropertyAll<Color>(
+                    Colors.white,
+                  ),
                 ),
-              ),
+                child: Text(
+                  'Update Score',
+                  style: TextStyle(color: Colors.black),
+                )),
+          ),
         ],
       ),
     );
