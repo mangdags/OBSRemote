@@ -225,4 +225,19 @@ class PresetsRepo {
 
     await _saveRawMap(map);
   }
+
+  Future<void> setNotes({
+    required String presetKey,
+    required String notes,
+  }) async {
+    final map = await _loadRawMap();
+    final existing = map[presetKey];
+    if (existing is! Map) return;
+
+    final presetJson = Map<String, dynamic>.from(existing as Map);
+    presetJson["notes"] = notes;
+
+    map[presetKey] = presetJson;
+    await _saveRawMap(map);
+  }
 }

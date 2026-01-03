@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:obsremote/models/presets_repo.dart';
+import 'package:obsremote/scores_overview_screen.dart';
 import 'package:obsremote/services/fights_storage.dart';
 import 'package:obsremote/widgets/entry_name.dart';
 import 'package:obsremote/widgets/fight_info.dart';
@@ -108,6 +109,48 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
     _replayTimer = null;
   }
 
+  String wrapEntryNameMulti(
+    String name, {
+    int maxCharsPerLine = 30,
+    int maxLines = 3,
+  }) {
+    final text = name.trim();
+    if (text.isEmpty) return text;
+
+    final words = text.split(RegExp(r'\s+'));
+    final lines = <String>[];
+
+    var current = '';
+
+    for (final word in words) {
+      final next = current.isEmpty ? word : '$current $word';
+
+      if (next.length <= maxCharsPerLine) {
+        current = next;
+      } else {
+        lines.add(current);
+        current = word;
+
+        if (lines.length == maxLines - 1) {
+          break;
+        }
+      }
+    }
+
+    if (lines.length < maxLines && current.isNotEmpty) {
+      lines.add(current);
+    }
+
+    // If text still remains, append it to last line (trimmed)
+    final usedWords = lines.join(' ').split(RegExp(r'\s+')).length;
+    if (usedWords < words.length) {
+      final remaining = words.sublist(usedWords).join(' ');
+      lines[lines.length - 1] = '${lines.last} ${remaining}'.trim();
+    }
+
+    return lines.join('\n');
+  }
+
   static const int maxFights = FighterPreset.maxFights;
 
   String meronScoreSource(int i) => "meron_score_$i";
@@ -116,10 +159,25 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   final String meronScoresGroup = "MeronScoresGroup";
   final String walaScoresGroup = "WalaScoresGroup";
 
+  FighterPreset? _meronPreset;
+  FighterPreset? _walaPreset;
+
   late String scoresSceneName;
 
   bool _meronScoresVisible = false;
   bool _walaScoresVisible = false;
+
+  List<String> _labelsFromPreset(FighterPreset? p, int fightsToShow) {
+    if (p == null) {
+      return List.generate(fightsToShow, (i) => "F${i + 1}: ");
+    }
+
+    return List.generate(fightsToShow, (i) {
+      final idx = i + 1;
+      final s = (p.scores[idx] ?? "").trim();
+      return "F$idx: ${s.isEmpty ? "" : s}";
+    });
+  }
 
   Future<void> _pushScoresToObs({
     required bool isMeron,
@@ -182,7 +240,7 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   }
 
   Future<void> _connect() async {
-    setState(() => _status = "Connecting...");
+    //setState(() => _status = "Connecting...");
     try {
       await _obs.connect(host: _hostCtrl.text.trim(), port: 4455);
       setState(() => _status = "Connected");
@@ -504,6 +562,7 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
 
   @override
   Widget build(BuildContext context) {
+    _connect();
     return Scaffold(
       appBar: AppBar(
         title: const Text("OBS Remote"),
@@ -520,6 +579,18 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
         child: ListView(
           children: [
             const DrawerHeader(child: Text('OBS Remote Settings')),
+            ListTile(
+              title: const Text('Scores Overview'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ScoresOverviewScreen(),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
             ListTile(
               title: const Text('Import DOCX'),
               onTap: () async {
@@ -634,11 +705,14 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                 key: entryNameKey,
                 title: "Entry Name Setter",
                 onSetMeron: (preset) async {
+                  final displayName = wrapEntryNameMulti(preset.entryName,
+                      maxCharsPerLine: 50, maxLines: 4);
+
                   final fresh = await _freshPreset(
                       preset); // ✅ reload latest scores from file
 
                   await _obs.setTextSource(
-                      inputName: meronTextSource, text: fresh.entryName);
+                      inputName: meronTextSource, text: displayName);
                   await _obs.setTextSource(
                       inputName: meronWeight, text: fresh.w);
                   await _obs.setTextSource(inputName: meronWB, text: fresh.wb);
@@ -646,6 +720,7 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                   await _pushScoresToObs(isMeron: true, fighterPreset: fresh);
 
                   setState(() {
+                    _meronPreset = fresh;
                     _status = "MERON set: ${fresh.entryName}";
                     meronEntryName = fresh.entryName;
                     meronKey = fresh.key;
@@ -662,9 +737,11 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                 },
                 onSetWala: (preset) async {
                   final fresh = await _freshPreset(preset);
+                  final displayName = wrapEntryNameMulti(preset.entryName,
+                      maxCharsPerLine: 50, maxLines: 4);
 
                   await _obs.setTextSource(
-                      inputName: walaTextSource, text: fresh.entryName);
+                      inputName: walaTextSource, text: displayName);
                   await _obs.setTextSource(
                       inputName: walaWeight, text: fresh.w);
                   await _obs.setTextSource(inputName: walaWB, text: fresh.wb);
@@ -672,6 +749,7 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                   await _pushScoresToObs(isMeron: false, fighterPreset: fresh);
 
                   setState(() {
+                    _walaPreset = fresh;
                     _status = "WALA set: ${fresh.entryName}";
                     walaEntryName = fresh.entryName;
                     walaKey = fresh.key;
@@ -688,8 +766,10 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                 },
                 onUseManualMeron: (meronName) async {
                   if (meronName.isNotEmpty) {
+                    final displayName = wrapEntryNameMulti(meronName,
+                        maxCharsPerLine: 50, maxLines: 4);
                     await _obs.setTextSource(
-                        inputName: meronTextSource, text: meronName);
+                        inputName: meronTextSource, text: displayName);
                     await _obs.setTextSource(
                         inputName: meronWeight, text: "--");
                     await _obs.setTextSource(
@@ -722,8 +802,10 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
                 },
                 onUseManualWala: (walaName) async {
                   if (walaName.isNotEmpty) {
+                    final displayName = wrapEntryNameMulti(walaName,
+                        maxCharsPerLine: 50, maxLines: 4);
                     await _obs.setTextSource(
-                        inputName: walaTextSource, text: walaName);
+                        inputName: walaTextSource, text: displayName);
                     await _obs.setTextSource(inputName: walaWeight, text: "--");
                     await _obs.setTextSource(inputName: walaWB, text: "ULUTAN");
 
@@ -758,16 +840,56 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
               children: [
                 // Example: set OBS text + show banner using your existing ObsClient functions
                 FightInfo(
-                  numberOfFights: 6,
+                  numberOfFights: 7,
                   entryName: meronEntryName,
                   backgroundColor: Colors.redAccent,
+                  presetKey: _meronPreset?.key ?? "",
+                  scores: _meronPreset?.scores ?? const {},
+                  onScoreChanged: (fightIndex, value) async {
+                    if (_meronPreset == null) return;
+
+                    await _presetsRepo.setScore(
+                      presetKey: _meronPreset!.key,
+                      fightNo: fightIndex,
+                      value: value,
+                    );
+
+                    // reload fresh + update OBS + update UI
+                    final fresh =
+                        await _presetsRepo.getByKey(_meronPreset!.key);
+                    if (fresh != null) {
+                      setState(() => _meronPreset = fresh);
+                      await _pushScoresToObs(
+                          isMeron: true, fighterPreset: fresh);
+                    }
+                  },
                 ),
+
                 const SizedBox(width: 12),
                 FightInfo(
-                  numberOfFights: 6,
+                  numberOfFights: 7,
                   entryName: walaEntryName,
                   backgroundColor: Colors.blueAccent,
+                  presetKey: _walaPreset?.key ?? "",
+                  scores: _walaPreset?.scores ?? const {},
+                  onScoreChanged: (fightIndex, value) async {
+                    if (_walaPreset == null) return;
+
+                    await _presetsRepo.setScore(
+                      presetKey: _walaPreset!.key,
+                      fightNo: fightIndex,
+                      value: value,
+                    );
+
+                    final fresh = await _presetsRepo.getByKey(_walaPreset!.key);
+                    if (fresh != null) {
+                      setState(() => _walaPreset = fresh);
+                      await _pushScoresToObs(
+                          isMeron: false, fighterPreset: fresh);
+                    }
+                  },
                 ),
+
                 const SizedBox(width: 12),
                 WinningSides(
                   onPickResult: (result) async {
