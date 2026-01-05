@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 class FightRecord {
   final int fightNumber;
@@ -131,4 +133,39 @@ class FightsStorage {
     final f = await _file();
     await f.writeAsString("[]", flush: true);
   }
+
 }
+
+  class FightsDataSource extends DataGridSource {
+      FightsDataSource({List<FightRecord>? fights}) {
+      _dataGridRows = fights
+          ?.map<DataGridRow>((fr) => DataGridRow(cells: [
+                DataGridCell<int>(columnName: 'fightNumber', value: fr.fightNumber),
+                DataGridCell<String>(columnName: 'meronKey', value: fr.meronKey),
+                DataGridCell<String>(columnName: 'walaKey', value: fr.walaKey),
+                DataGridCell<String>(columnName: 'result', value: fr.result),
+                // DataGridCell<String>(columnName: 'meronEntry', value: fr.meronEntry),
+                // DataGridCell<String>(columnName: 'walaEntry', value: fr.walaEntry),
+              ]))
+          .toList() ?? [];
+      }
+
+      List<DataGridRow> _dataGridRows = [];
+    
+      @override
+      List<DataGridRow> get rows => _dataGridRows;
+
+      @override
+      DataGridRowAdapter? buildRow(DataGridRow row) {
+        return DataGridRowAdapter(
+            cells: row.getCells().map<Widget>((dataGridCell) {
+          return Container(
+            alignment: (dataGridCell.columnName == 'fightNumber' || dataGridCell.columnName == 'meronEntry' || dataGridCell.columnName == 'walaEntry')
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            padding: EdgeInsets.all(16.0),
+            child: Text(dataGridCell.value.toString()),
+          );
+        }).toList());
+      }
+  }

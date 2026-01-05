@@ -55,7 +55,7 @@ class _ObsRemoteHomeState extends State<ObsRemoteHome> {
   final _obs = ObsClient();
 
   final _hostCtrl =
-      TextEditingController(text: "192.168.1.25"); // <-- OBS PC IP
+      TextEditingController(text: "192.168.1.6"); // <-- OBS PC IP
   final _entryCtrl = TextEditingController();
 
   String _side = "meron";

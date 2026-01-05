@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:obsremote/models/fighter_preset.dart';
 import 'package:obsremote/models/presets_repo.dart';
+import 'package:obsremote/services/fight_summary_table.dart';
 import 'package:obsremote/services/fights_storage.dart';
+import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 class ScoresOverviewScreen extends StatefulWidget {
   const ScoresOverviewScreen({super.key});
@@ -172,7 +174,55 @@ class _ScoresOverviewScreenState extends State<ScoresOverviewScreen> {
 
                     Expanded(
                       flex: 3,
-                      child: _fightersTable(fightersFiltered),
+                      child: SfDataGrid(
+                        gridLinesVisibility: GridLinesVisibility.both,
+                        headerGridLinesVisibility: GridLinesVisibility.both,
+                        frozenColumnsCount: 1,
+                        rowHeight: 60,
+                        allowColumnsResizing: true,
+                        allowSorting: true,
+                        source: FightSummaryTable(fights: _fighters), columns: [
+                        
+                        GridColumn(
+                          
+                          columnWidthMode: ColumnWidthMode.fill,
+                          columnName: 'entryName',
+                          minimumWidth: 200,
+                          maximumWidth: 250,
+                          allowSorting: false,
+                          label: Container(
+                              padding: const EdgeInsets.all(8.0),
+                              alignment: Alignment.centerLeft,
+                              child: const Text('ENTRY NAME'),
+                              )
+                            ),
+                        for (int i = 1; i <= maxF; i++)
+                          GridColumn(
+                        allowSorting: false,
+                            width: 40,
+                              columnName: 'f$i',
+                              label: Container(
+                                  padding: const EdgeInsets.all(8.0),
+                                  alignment: Alignment.center,
+                                  child: Text('F$i'))),
+                        GridColumn(
+                            columnName: 'total',
+                            allowSorting: true,
+                            width: 85,
+                            label: Container(
+                                padding: const EdgeInsets.all(8.0),
+                                alignment: Alignment.center,
+                                child: const Text('TOTAL'))),
+                        GridColumn(
+                            columnName: 'notes',
+                            allowEditing: true,
+                        allowSorting: false,
+                            width: 130,
+                            label: Container(
+                                padding: const EdgeInsets.all(8.0),
+                                alignment: Alignment.center,
+                                child: const Text('NOTES'))),
+                      ]),
                     ),
                     const Divider(thickness: 2),
                     Expanded(
@@ -184,72 +234,7 @@ class _ScoresOverviewScreenState extends State<ScoresOverviewScreen> {
     );
   }
 
-  Widget _fightersTable(List<FighterPreset> fighters) {
-    final maxF = FighterPreset.maxFights;
-
-    return Scrollbar(
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.vertical,
-        child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 18,
-              sortColumnIndex: _sortColumnIndex,
-              sortAscending: _sortAscending,
-              columns: [
-                const DataColumn(label: Text("Entry Name")),
-                const DataColumn(label: Text("F1")),
-                const DataColumn(label: Text("F2")),
-                const DataColumn(label: Text("F3")),
-                const DataColumn(label: Text("F4")),
-                const DataColumn(label: Text("F5")),
-                const DataColumn(label: Text("F6")),
-                const DataColumn(label: Text("F7")),
-
-                /// ✅ SORTABLE TOTAL COLUMN
-                DataColumn(
-                  label: const Text("Total"),
-                  numeric: true,
-                  onSort: (columnIndex, ascending) {
-                    setState(() {
-                      _sortColumnIndex = columnIndex;
-                      _sortAscending = ascending;
-
-                      int cmp(FighterPreset a, FighterPreset b) {
-                        final ta = _totalScore(a);
-                        final tb = _totalScore(b);
-                        return ascending ? ta.compareTo(tb) : tb.compareTo(ta);
-                      }
-
-                      // 1) Sort the list currently displayed in the table
-                      fighters.sort(cmp);
-
-                      // 2) Also mirror that ordering to the master list, by key
-                      final order = {
-                        for (int i = 0; i < fighters.length; i++)
-                          fighters[i].key: i
-                      };
-
-                      _fighters.sort((a, b) {
-                        final ia = order[a.key];
-                        final ib = order[b.key];
-                        if (ia != null && ib != null) return ia.compareTo(ib);
-                        if (ia != null) return -1;
-                        if (ib != null) return 1;
-                        return cmp(a, b); // fallback
-                      });
-                    });
-                  },
-                ),
-
-                const DataColumn(label: Text("Notes")),
-              ],
-              rows: fighters.map(_fighterRow).toList(),
-            )),
-      ),
-    );
-  }
+  
 
   DataRow _fighterRow(FighterPreset f) {
     final maxF = FighterPreset.maxFights;
