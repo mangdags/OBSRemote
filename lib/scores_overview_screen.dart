@@ -175,54 +175,61 @@ class _ScoresOverviewScreenState extends State<ScoresOverviewScreen> {
                     Expanded(
                       flex: 3,
                       child: SfDataGrid(
-                        gridLinesVisibility: GridLinesVisibility.both,
-                        headerGridLinesVisibility: GridLinesVisibility.both,
-                        frozenColumnsCount: 1,
-                        rowHeight: 60,
-                        allowColumnsResizing: true,
-                        allowSorting: true,
-                        source: FightSummaryTable(fights: _fighters), columns: [
-                        
-                        GridColumn(
-                          
-                          columnWidthMode: ColumnWidthMode.fill,
-                          columnName: 'entryName',
-                          minimumWidth: 200,
-                          maximumWidth: 250,
-                          allowSorting: false,
-                          label: Container(
-                              padding: const EdgeInsets.all(8.0),
-                              alignment: Alignment.centerLeft,
-                              child: const Text('ENTRY NAME'),
-                              )
-                            ),
-                        for (int i = 1; i <= maxF; i++)
-                          GridColumn(
-                        allowSorting: false,
-                            width: 40,
-                              columnName: 'f$i',
-                              label: Container(
+                          selectionMode: SelectionMode.single,
+                          navigationMode: GridNavigationMode.cell,
+                          editingGestureType:
+                              EditingGestureType.tap, // ✅ single tap to edit
+                          allowEditing: true,
+                          gridLinesVisibility: GridLinesVisibility.both,
+                          headerGridLinesVisibility: GridLinesVisibility.both,
+                          frozenColumnsCount: 1,
+                          rowHeight: 60,
+                          allowColumnsResizing: true,
+                          allowSorting: true,
+                          source: FightSummaryTable(
+                            fighters: _fighters,
+                            presetsRepo: _presetsRepo,
+                            maxFights: maxF,
+                          ),
+                          columns: [
+                            GridColumn(
+                                columnWidthMode: ColumnWidthMode.fill,
+                                columnName: 'entryName',
+                                minimumWidth: 200,
+                                maximumWidth: 250,
+                                allowSorting: false,
+                                label: Container(
                                   padding: const EdgeInsets.all(8.0),
-                                  alignment: Alignment.center,
-                                  child: Text('F$i'))),
-                        GridColumn(
-                            columnName: 'total',
-                            allowSorting: true,
-                            width: 85,
-                            label: Container(
-                                padding: const EdgeInsets.all(8.0),
-                                alignment: Alignment.center,
-                                child: const Text('TOTAL'))),
-                        GridColumn(
-                            columnName: 'notes',
-                            allowEditing: true,
-                        allowSorting: false,
-                            width: 130,
-                            label: Container(
-                                padding: const EdgeInsets.all(8.0),
-                                alignment: Alignment.center,
-                                child: const Text('NOTES'))),
-                      ]),
+                                  alignment: Alignment.centerLeft,
+                                  child: const Text('ENTRY NAME'),
+                                )),
+                            for (int i = 1; i <= maxF; i++)
+                              GridColumn(
+                                  allowSorting: false,
+                                  width: 40,
+                                  columnName: 'f$i',
+                                  label: Container(
+                                      padding: const EdgeInsets.all(8.0),
+                                      alignment: Alignment.center,
+                                      child: Text('F$i'))),
+                            GridColumn(
+                                columnName: 'total',
+                                allowSorting: true,
+                                width: 85,
+                                label: Container(
+                                    padding: const EdgeInsets.all(8.0),
+                                    alignment: Alignment.center,
+                                    child: const Text('TOTAL'))),
+                            GridColumn(
+                                columnName: 'notes',
+                                allowEditing: true,
+                                allowSorting: false,
+                                width: 130,
+                                label: Container(
+                                    padding: const EdgeInsets.all(8.0),
+                                    alignment: Alignment.center,
+                                    child: const Text('NOTES'))),
+                          ]),
                     ),
                     const Divider(thickness: 2),
                     Expanded(
@@ -233,8 +240,6 @@ class _ScoresOverviewScreenState extends State<ScoresOverviewScreen> {
                 ),
     );
   }
-
-  
 
   DataRow _fighterRow(FighterPreset f) {
     final maxF = FighterPreset.maxFights;
